@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>VR Browser</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    font-family: 'Courier New', monospace;
+    touch-action: none;
+  }
+
+  #vr-container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+  }
+
+  .eye {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .eye-left { border-right: 2px solid #1a1a2e; }
+
+  #camera-video {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 100%;
+    min-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: cover;
+  }
+
+  #camera-canvas-right {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* VR lens distortion overlay */
+  .lens-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      transparent 55%,
+      rgba(0,0,0,0.4) 75%,
+      rgba(0,0,0,0.85) 88%,
+      rgba(0,0,0,1) 100%
+    );
+    z-index: 2;
+  }
+
+  /* Divider line center */
+  #center-divider {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(to bottom, #0a0a1a, #1a1a3e, #0a0a1a);
+    z-index: 50;
+    transform: translateX(-50%);
+  }
+
+  /* Browser window in VR space */
+  .vr-browser-wrapper {
+    position: absolute;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  #browser-left {
+    top: 0; left: 0;
+    width: 50vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #browser-right {
+    top: 0; left: 50vw;
+    width: 50vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .browser-panel {
+    width: 90%;
+    max-width: 420px;
+    height: 65vh;
+    background: rgba(5, 8, 20, 0.88);
+    border: 1px solid rgba(0, 180, 255, 0.35);
+    border-radius: 12px;
+    box-shadow:
+      0 0 30px rgba(0, 150, 255, 0.15),
+      0 0 60px rgba(0, 100, 200, 0.08),
+      inset 0 1px 0 rgba(255,255,255,0.05);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    pointer-events: all;
+  }
+
+  .browser-titlebar {
+    background: rgba(10, 20, 50, 0.95);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid rgba(0, 180, 255, 0.2);
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+
+  .browser-dots {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+  .dot-r { background: #ff5f57; }
+  .dot-y { background: #febc2e; }
+  .dot-g { background: #28c840; }
+
+  .browser-url-bar {
+    flex: 1;
+    background: rgba(0, 20, 50, 0.8);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+    color: #7dd3fc;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    outline: none;
+  }
+
+  .browser-go-btn {
+    background: rgba(0, 100, 200, 0.6);
+    border: 1px solid rgba(0, 180, 255, 0.4);
+    color: #7dd3fc;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .browser-go-btn:hover { background: rgba(0, 150, 255, 0.6); }
+
+  .browser-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .browser-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #fff;
+  }
+
+  /* CURSOR */
+  #vr-cursor-left, #vr-cursor-right {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+    z-index: 30;
+    transform: translate(-50%, -50%);
+    transition: transform 0.05s linear;
+  }
+
+  .cursor-dot {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: rgba(0, 220, 255, 0.95);
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px rgba(0, 220, 255, 0.8);
+  }
+
+  .cursor-ring {
+    position: absolute;
+    top: 0; left: 0;
+    width: 18px; height: 18px;
+    border: 1.5px solid rgba(0, 220, 255, 0.6);
+    border-radius: 50%;
+    animation: cursorPulse 2s infinite;
+  }
+
+  @keyframes cursorPulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.1); }
+  }
+
+  .cursor-ring.clicking {
+    animation: none;
+    border-color: rgba(255, 100, 0, 0.9);
+    transform: scale(0.7);
+  }
+
+  /* HUD */
+  .hud {
+    position: absolute;
+    top: 16px;
+    z-index: 20;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .hud-left { left: 16px; }
+  .hud-right { right: 16px; text-align: right; }
+
+  .hud-item {
+    font-size: 9px;
+    color: rgba(0, 200, 255, 0.7);
+    text-shadow: 0 0 8px rgba(0, 200, 255, 0.5);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  /* Volume indicator */
+  .volume-bar-container {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    opacity: 0;
+    transition: opacity 0.5s;
+  }
+  .volume-bar-container.visible { opacity: 1; }
+
+  .vol-label {
+    font-size: 8px;
+    color: rgba(0, 200, 255, 0.8);
+    letter-spacing: 0.1em;
+  }
+
+  .volume-track {
+    width: 6px;
+    height: 100px;
+    background: rgba(0, 50, 100, 0.6);
+    border: 1px solid rgba(0, 150, 255, 0.3);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column-reverse;
+  }
+
+  .volume-fill {
+    width: 100%;
+    background: linear-gradient(to top, #00b4ff, #00ffcc);
+    border-radius: 3px;
+    transition: height 0.1s;
+  }
+
+  /* Status bar bottom */
+  .status-bar {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    gap: 20px;
+    pointer-events: none;
+  }
+
+  .status-indicator {
+    font-size: 8px;
+    color: rgba(0, 200, 255, 0.5);
+    letter-spacing: 0.15em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .status-led {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #00ff88;
+    box-shadow: 0 0 6px #00ff88;
+    animation: blink 2s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* NO camera fallback */
+  .no-camera {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+    background: radial-gradient(ellipse at center, #0a1520 0%, #000510 100%);
+  }
+
+  .grid-lines {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,150,255,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,150,255,0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    animation: gridMove 8s linear infinite;
+  }
+
+  @keyframes gridMove {
+    from { background-position: 0 0; }
+    to { background-position: 40px 40px; }
+  }
+
+  .no-camera-text {
+    color: rgba(0, 200, 255, 0.6);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    z-index: 1;
+  }
+
+  /* Notification */
+  #notification {
+    position: fixed;
+    top: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 20, 50, 0.95);
+    border: 1px solid rgba(0, 180, 255, 0.4);
+    color: #7dd3fc;
+    font-size: 10px;
+    padding: 6px 16px;
+    border-radius: 20px;
+    z-index: 100;
+    letter-spacing: 0.1em;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  #notification.show { opacity: 1; }
+
+  /* Joystick help overlay */
+  #controls-help {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 10, 30, 0.9);
+    border: 1px solid rgba(0, 100, 200, 0.3);
+    border-radius: 10px;
+    padding: 10px 18px;
+    z-index: 100;
+    text-align: center;
+    display: none;
+  }
+  #controls-help.visible { display: block; }
+  #controls-help p {
+    color: rgba(0, 200, 255, 0.7);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    line-height: 1.8;
+  }
+</style>
+</head>
+<body>
+
+<div id="vr-container">
+  <!-- LEFT EYE -->
+  <div class="eye eye-left" id="eye-left">
+    <video id="camera-video" autoplay playsinline muted></video>
+    <div class="no-camera" id="no-cam-left" style="display:none">
+      <div class="grid-lines"></div>
+      <div class="no-camera-text">[ NO CAMERA ]</div>
+      <div class="no-camera-text" style="font-size:8px; opacity:0.5">ALLOW CAMERA ACCESS</div>
+    </div>
+    <div class="lens-overlay"></div>
+
+    <!-- HUD Left -->
+    <div class="hud hud-left">
+      <div class="hud-item" id="hud-heading-l">HDG: ---°</div>
+      <div class="hud-item" id="hud-pitch-l">PITCH: --°</div>
+      <div class="hud-item" id="hud-roll-l">ROLL: --°</div>
+    </div>
+    <div class="hud hud-right" style="right:16px">
+      <div class="hud-item" id="hud-gamepad-l">GAMEPAD: --</div>
+      <div class="hud-item" id="hud-vol-l">VOL: 100%</div>
+    </div>
+
+    <!-- Browser panel left -->
+    <div class="vr-browser-wrapper" id="browser-left">
+      <div class="browser-panel" id="panel-left">
+        <div class="browser-titlebar">
+          <div class="browser-dots">
+            <div class="dot dot-r"></div>
+            <div class="dot dot-y"></div>
+            <div class="dot dot-g"></div>
+          </div>
+          <input class="browser-url-bar" id="url-bar-left" type="text" value="https://www.wikipedia.org" placeholder="Enter URL..." readonly>
+          <button class="browser-go-btn" onclick="navigateBrowser()">GO</button>
+        </div>
+        <div class="browser-content">
+          <iframe class="browser-iframe" id="iframe-left" src="https://www.wikipedia.org" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cursor Left -->
+    <div id="vr-cursor-left">
+      <div class="cursor-ring" id="ring-left"></div>
+      <div class="cursor-dot"></div>
+    </div>
+
+    <!-- Volume bar left -->
+    <div class="volume-bar-container" id="vol-bar-left">
+      <div class="vol-label">VOL</div>
+      <div class="volume-track">
+        <div class="volume-fill" id="vol-fill-left" style="height:100%"></div>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="status-led"></div>
+        <span>VR ACTIVE</span>
+      </div>
+      <div class="status-indicator" id="mag-status-l">MAG: OFF</div>
+    </div>
+  </div>
+
+  <!-- CENTER DIVIDER -->
+  <div id="center-divider"></div>
+
+  <!-- RIGHT EYE -->
+  <div class="eye eye-right" id="eye-right">
+    <canvas id="camera-canvas-right"></canvas>
+    <div class="no-camera" id="no-cam-right" style="display:none">
+      <div class="grid-lines"></div>
+      <div class="no-camera-text">[ NO CAMERA ]</div>
+    </div>
+    <div class="lens-overlay"></div>
+
+    <!-- Browser panel right (clone) -->
+    <div class="vr-browser-wrapper" id="browser-right">
+      <div class="browser-panel" id="panel-right">
+        <div class="browser-titlebar">
+          <div class="browser-dots">
+            <div class="dot dot-r"></div>
+            <div class="dot dot-y"></div>
+            <div class="dot dot-g"></div>
+          </div>
+          <input class="browser-url-bar" id="url-bar-right" type="text" value="https://www.wikipedia.org" placeholder="Enter URL..." readonly>
+          <button class="browser-go-btn" onclick="navigateBrowser()">GO</button>
+        </div>
+        <div class="browser-content">
+          <iframe class="browser-iframe" id="iframe-right" src="https://www.wikipedia.org" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cursor Right -->
+    <div id="vr-cursor-right">
+      <div class="cursor-ring" id="ring-right"></div>
+      <div class="cursor-dot"></div>
+    </div>
+
+    <!-- Volume bar right -->
+    <div class="volume-bar-container" id="vol-bar-right">
+      <div class="vol-label">VOL</div>
+      <div class="volume-track">
+        <div class="volume-fill" id="vol-fill-right" style="height:100%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Notification -->
+<div id="notification">VR BROWSER READY</div>
+
+<!-- Controls help -->
+<div id="controls-help" class="visible">
+  <p>
+    🕹 LEFT STICK — move browser panel<br>
+    🕹 RIGHT STICK — move cursor<br>
+    🎮 A / X — click<br>
+    🎮 R2/RT — volume up · L2/LT — volume down<br>
+    🎮 START — lock browser to heading<br>
+    🧲 Magnetometer — auto-anchors browser in space
+  </p>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  // Browser panel offset from center (in px)
+  panelOffsetX: 0,
+  panelOffsetY: 0,
+  // Locked heading (magnetometer)
+  lockedHeading: null,
+  // Current orientation
+  heading: 0,
+  pitch: 0,
+  roll: 0,
+  // Cursor position (0..1 relative to each eye)
+  cursorX: 0.5,
+  cursorY: 0.5,
+  // Volume 0..1
+  volume: 1.0,
+  // Gamepad state
+  gamepadIndex: null,
+  prevButtons: [],
+  // Volume display timer
+  volTimer: null,
+  // Camera stream
+  stream: null,
+  videoReady: false,
+};
+
+// ============================================================
+// CAMERA
+// ============================================================
+const video = document.getElementById('camera-video');
+const canvasRight = document.getElementById('camera-canvas-right');
+const ctxRight = canvasRight.getContext('2d');
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    state.stream = stream;
+    video.srcObject = stream;
+    video.addEventListener('loadedmetadata', () => {
+      canvasRight.width = video.videoWidth || 1280;
+      canvasRight.height = video.videoHeight || 720;
+      state.videoReady = true;
+    });
+    document.getElementById('no-cam-left').style.display = 'none';
+    document.getElementById('no-cam-right').style.display = 'none';
+  } catch (e) {
+    document.getElementById('no-cam-left').style.display = 'flex';
+    document.getElementById('no-cam-right').style.display = 'flex';
+    video.style.display = 'none';
+    notify('CAMERA ACCESS DENIED');
+  }
+}
+
+// Mirror video to right eye canvas
+function mirrorVideoToRight() {
+  if (!state.videoReady) return;
+  try {
+    ctxRight.drawImage(video, 0, 0, canvasRight.width, canvasRight.height);
+  } catch(e) {}
+}
+
+// ============================================================
+// MAGNETOMETER / DEVICE ORIENTATION
+// ============================================================
+let magAvailable = false;
+
+function initOrientation() {
+  if (window.DeviceOrientationEvent) {
+    // iOS 13+ requires permission
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(perm => {
+        if (perm === 'granted') listenOrientation();
+      }).catch(() => listenOrientation());
+    } else {
+      listenOrientation();
+    }
+  }
+}
+
+function listenOrientation() {
+  window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+  window.addEventListener('deviceorientation', handleOrientation, true);
+}
+
+function handleOrientation(e) {
+  let alpha = e.alpha || 0;   // heading (compass) 0-360
+  let beta  = e.beta  || 0;   // pitch -180..180
+  let gamma = e.gamma || 0;   // roll -90..90
+
+  // Normalize heading
+  if (e.webkitCompassHeading !== undefined) {
+    alpha = e.webkitCompassHeading; // iOS gives true compass
+  }
+
+  state.heading = alpha;
+  state.pitch   = beta;
+  state.roll    = gamma;
+  magAvailable  = true;
+
+  // Update HUD
+  document.getElementById('hud-heading-l').textContent = `HDG: ${Math.round(alpha)}°`;
+  document.getElementById('hud-pitch-l').textContent   = `PITCH: ${Math.round(beta)}°`;
+  document.getElementById('hud-roll-l').textContent    = `ROLL: ${Math.round(gamma)}°`;
+  document.getElementById('mag-status-l').textContent  = 'MAG: ON';
+
+  updateBrowserPosition();
+}
+
+function lockBrowserToHeading() {
+  state.lockedHeading = state.heading;
+  state.panelOffsetX  = 0;
+  state.panelOffsetY  = 0;
+  notify('BROWSER LOCKED TO HEADING ' + Math.round(state.lockedHeading) + '°');
+}
+
+// ============================================================
+// BROWSER PANEL POSITIONING
+// ============================================================
+function updateBrowserPosition() {
+  let offsetX = state.panelOffsetX;
+  let offsetY = state.panelOffsetY;
+
+  // If locked to heading, shift panel based on how far we've turned
+  if (state.lockedHeading !== null && magAvailable) {
+    let diff = state.heading - state.lockedHeading;
+    // Normalize diff to -180..180
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+    // Map diff to pixel offset (each degree = ~8px)
+    const magnetX = -diff * 8;
+    const magnetY = -state.pitch * 4;
+    offsetX += magnetX;
+    offsetY += magnetY;
+  }
+
+  // Clamp
+  const maxX = window.innerWidth * 0.25;
+  const maxY = window.innerHeight * 0.3;
+  offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
+  offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
+
+  applyPanelTransform(offsetX, offsetY);
+}
+
+function applyPanelTransform(x, y) {
+  const panels = [
+    document.getElementById('browser-left'),
+    document.getElementById('browser-right')
+  ];
+  panels.forEach(p => {
+    p.style.transform = `translate(${x}px, ${y}px)`;
+  });
+}
+
+// ============================================================
+// CURSOR
+// ============================================================
+function updateCursor() {
+  const eyeW = window.innerWidth / 2;
+  const eyeH = window.innerHeight;
+
+  const cx = state.cursorX * eyeW;
+  const cy = state.cursorY * eyeH;
+
+  const curL = document.getElementById('vr-cursor-left');
+  const curR = document.getElementById('vr-cursor-right');
+
+  curL.style.left = cx + 'px';
+  curL.style.top  = cy + 'px';
+  curR.style.left = cx + 'px';
+  curR.style.top  = cy + 'px';
+}
+
+// ============================================================
+// GAMEPAD
+// ============================================================
+window.addEventListener('gamepadconnected', (e) => {
+  state.gamepadIndex = e.gamepad.index;
+  notify('JOYSTICK CONNECTED: ' + e.gamepad.id.substring(0, 20));
+  document.getElementById('hud-gamepad-l').textContent = 'GAMEPAD: ON';
+  document.getElementById('controls-help').classList.remove('visible');
+});
+
+window.addEventListener('gamepaddisconnected', (e) => {
+  state.gamepadIndex = null;
+  document.getElementById('hud-gamepad-l').textContent = 'GAMEPAD: --';
+});
+
+function pollGamepad() {
+  if (state.gamepadIndex === null) return;
+  const gamepads = navigator.getGamepads();
+  const gp = gamepads[state.gamepadIndex];
+  if (!gp) return;
+
+  const deadzone = 0.12;
+  const panSpeed = 3.5;
+  const curSpeed = 0.008;
+
+  // LEFT STICK → move browser panel
+  const lx = Math.abs(gp.axes[0]) > deadzone ? gp.axes[0] : 0;
+  const ly = Math.abs(gp.axes[1]) > deadzone ? gp.axes[1] : 0;
+  if (lx !== 0 || ly !== 0) {
+    state.panelOffsetX += lx * panSpeed;
+    state.panelOffsetY += ly * panSpeed;
+    updateBrowserPosition();
+  }
+
+  // RIGHT STICK → move cursor
+  const rx = Math.abs(gp.axes[2]) > deadzone ? gp.axes[2] : 0;
+  const ry = Math.abs(gp.axes[3]) > deadzone ? gp.axes[3] : 0;
+  if (rx !== 0 || ry !== 0) {
+    state.cursorX = Math.max(0, Math.min(1, state.cursorX + rx * curSpeed));
+    state.cursorY = Math.max(0, Math.min(1, state.cursorY + ry * curSpeed));
+    updateCursor();
+  }
+
+  // Buttons
+  const buttons = gp.buttons;
+
+  // A(0) or Cross → click
+  if (pressedNow(buttons, 0)) {
+    triggerClick();
+  }
+  // X(2) or Square → click
+  if (pressedNow(buttons, 2)) {
+    triggerClick();
+  }
+
+  // R2/RT (7) → volume up
+  const r2 = buttons[7] ? buttons[7].value : 0;
+  if (r2 > 0.1) {
+    changeVolume(r2 * 0.01);
+  }
+  // L2/LT (6) → volume down
+  const l2 = buttons[6] ? buttons[6].value : 0;
+  if (l2 > 0.1) {
+    changeVolume(-l2 * 0.01);
+  }
+
+  // START (9) → lock browser to heading
+  if (pressedNow(buttons, 9)) {
+    lockBrowserToHeading();
+  }
+  // SELECT (8) → unlock
+  if (pressedNow(buttons, 8)) {
+    state.lockedHeading = null;
+    notify('BROWSER UNLOCKED');
+  }
+
+  // D-pad up/down (12/13) → move cursor Y
+  if (pressedNow(buttons, 12)) { state.cursorY = Math.max(0, state.cursorY - 0.05); updateCursor(); }
+  if (pressedNow(buttons, 13)) { state.cursorY = Math.min(1, state.cursorY + 0.05); updateCursor(); }
+  if (pressedNow(buttons, 14)) { state.cursorX = Math.max(0, state.cursorX - 0.05); updateCursor(); }
+  if (pressedNow(buttons, 15)) { state.cursorX = Math.min(1, state.cursorX + 0.05); updateCursor(); }
+
+  // Save previous state
+  state.prevButtons = buttons.map(b => b.pressed);
+}
+
+function pressedNow(buttons, index) {
+  const cur = buttons[index] && buttons[index].pressed;
+  const prev = state.prevButtons[index] || false;
+  return cur && !prev;
+}
+
+// ============================================================
+// CLICK ACTION
+// ============================================================
+function triggerClick() {
+  // Visual feedback
+  ['ring-left', 'ring-right'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.add('clicking');
+    setTimeout(() => el.classList.remove('clicking'), 200);
+  });
+
+  // Find element under cursor in left iframe
+  const eyeW = window.innerWidth / 2;
+  const eyeH = window.innerHeight;
+  const cx = state.cursorX * eyeW;
+  const cy = state.cursorY * eyeH;
+
+  // Try to click inside iframe at cursor position
+  const iframe = document.getElementById('iframe-left');
+  const rect = iframe.getBoundingClientRect();
+  if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
+    try {
+      const iDoc = iframe.contentDocument || iframe.contentWindow.document;
+      const relX = cx - rect.left;
+      const relY = cy - rect.top;
+      const elem = iDoc.elementFromPoint(relX, relY);
+      if (elem) {
+        elem.click();
+        notify('CLICK');
+      }
+    } catch(e) {
+      notify('CLICK (cross-origin)');
+    }
+  }
+
+  // Also try clicking real DOM element
+  const elem = document.elementFromPoint(cx, cy);
+  if (elem && elem !== iframe) {
+    elem.click();
+  }
+}
+
+// ============================================================
+// VOLUME
+// ============================================================
+function changeVolume(delta) {
+  state.volume = Math.max(0, Math.min(1, state.volume + delta));
+
+  // Apply to iframes (won't work cross-origin but sets for same-origin)
+  ['iframe-left', 'iframe-right'].forEach(id => {
+    try {
+      const iw = document.getElementById(id).contentWindow;
+      const audios = iw.document.querySelectorAll('audio, video');
+      audios.forEach(a => { a.volume = state.volume; });
+    } catch(e) {}
+  });
+
+  const pct = Math.round(state.volume * 100);
+  document.getElementById('hud-vol-l').textContent = `VOL: ${pct}%`;
+
+  // Show volume bars
+  const fillPct = (state.volume * 100) + '%';
+  document.getElementById('vol-fill-left').style.height  = fillPct;
+  document.getElementById('vol-fill-right').style.height = fillPct;
+
+  document.getElementById('vol-bar-left').classList.add('visible');
+  document.getElementById('vol-bar-right').classList.add('visible');
+  clearTimeout(state.volTimer);
+  state.volTimer = setTimeout(() => {
+    document.getElementById('vol-bar-left').classList.remove('visible');
+    document.getElementById('vol-bar-right').classList.remove('visible');
+  }, 2000);
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function navigateBrowser() {
+  const url = document.getElementById('url-bar-left').value.trim();
+  let finalUrl = url;
+  if (!finalUrl.startsWith('http')) finalUrl = 'https://' + finalUrl;
+
+  document.getElementById('iframe-left').src  = finalUrl;
+  document.getElementById('iframe-right').src = finalUrl;
+  document.getElementById('url-bar-left').value  = finalUrl;
+  document.getElementById('url-bar-right').value = finalUrl;
+  notify('LOADING: ' + finalUrl.substring(0, 30) + '...');
+}
+
+// URL bar sync
+document.getElementById('url-bar-left').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.target.blur();
+    navigateBrowser();
+  }
+});
+
+// Make URL bar editable on click
+document.getElementById('url-bar-left').addEventListener('click', function() {
+  this.removeAttribute('readonly');
+  this.focus();
+});
+document.getElementById('url-bar-left').addEventListener('blur', function() {
+  this.setAttribute('readonly', '');
+});
+
+// ============================================================
+// TOUCH CURSOR (phone without gamepad)
+// ============================================================
+document.addEventListener('touchmove', (e) => {
+  const t = e.touches[0];
+  const eyeW = window.innerWidth / 2;
+  // Use left half as cursor zone
+  if (t.clientX < eyeW) {
+    state.cursorX = t.clientX / eyeW;
+    state.cursorY = t.clientY / window.innerHeight;
+    updateCursor();
+  }
+}, { passive: true });
+
+document.addEventListener('touchend', (e) => {
+  const t = e.changedTouches[0];
+  if (t.clientX < window.innerWidth / 2) {
+    triggerClick();
+  }
+});
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+let notifTimer = null;
+function notify(msg) {
+  const el = document.getElementById('notification');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(notifTimer);
+  notifTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+let lastTime = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  mirrorVideoToRight();
+  if (ts - lastTime > 16) { // ~60fps gamepad
+    pollGamepad();
+    lastTime = ts;
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  await startCamera();
+  initOrientation();
+  updateCursor();
+
+  // Set initial panel position
+  applyPanelTransform(0, 0);
+
+  // Request fullscreen
+  document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {});
+
+  notify('VR BROWSER — HOLD START TO LOCK VIEW');
+  setTimeout(() => {
+    document.getElementById('controls-help').classList.remove('visible');
+  }, 6000);
+
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>
